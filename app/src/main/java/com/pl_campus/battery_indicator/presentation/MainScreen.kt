@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
@@ -40,16 +43,22 @@ import com.pl_campus.battery_indicator.presentation.ui.theme.SurfaceColor
 import com.pl_campus.battery_indicator.presentation.ui.theme.heart_beat_max
 import com.pl_campus.battery_indicator.presentation.ui.theme.heart_beat_min
 import com.pl_campus.battery_indicator.presentation.ui.theme.heart_grey
-
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 
 @Composable
 fun MainScreen(modifier: Modifier,
                helpers: Helpers? = null
 ){
 
-    val context = LocalContext.current
-
-    val percentBattery =  helpers?.getBatteryPercentage(context) ?: 0
+    val percentBattery by rememberBatteryPercentageState(helpers)
     BatteryScreen(modifier, percentBattery, helpers)
 
 }
@@ -100,7 +109,17 @@ fun BatteryScreen(modifier: Modifier,
         else {
             heart_grey
         }
+        val localDensity = LocalDensity.current
 
+        var backgroundBatteryHeightDp by remember {
+            mutableStateOf(0.dp)
+        }
+
+        var chargeBarHeightDp by remember {
+            mutableStateOf(0.dp)
+        }
+
+        val batterPadding = (backgroundBatteryHeightDp-chargeBarHeightDp)/2
 
         Box(
             modifier = modifier.
@@ -112,11 +131,15 @@ fun BatteryScreen(modifier: Modifier,
             },
             contentAlignment = Alignment.Center){
             Image(
+                modifier = Modifier.align(Alignment.CenterStart)
+                    .background(Color.Transparent).onGloballyPositioned { coordinates ->
+                        backgroundBatteryHeightDp = with(localDensity) { coordinates.size.height.toDp() }
+                    },
                 painter = painterResource(id = R.drawable.battary),
                 contentDescription = "Figure"
             )
 
-            val battertImage = when(batteryState){
+            val batteryImage = when(batteryState){
                 BatteryState.LOW -> {
                     R.drawable.battery_low
                 }
@@ -124,8 +147,19 @@ fun BatteryScreen(modifier: Modifier,
                 else -> R.drawable.battery_middle
             }
             Image(
-                modifier = Modifier.align(Alignment.CenterStart),
-                painter = painterResource(id = battertImage),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .background(Color.Transparent)
+                    .background(Color.Transparent).onGloballyPositioned { coordinates ->
+                        chargeBarHeightDp = with(localDensity) { coordinates.size.height.toDp() }
+                    }
+                    .padding(start = batterPadding),
+                painter = painterResource(id = batteryImage),
+                contentDescription = "Figure"
+            )
+            Image(
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = batterPadding),
+                painter = painterResource(id = R.drawable.dividers_green),
                 contentDescription = "Figure"
             )
         }
@@ -158,6 +192,41 @@ fun BatteryScreen(modifier: Modifier,
     }
 }
 
+
+@Composable
+fun rememberBatteryPercentageState(helpers: Helpers?): State<Int> {
+    val context = LocalContext.current
+    val batteryPercentage = remember { mutableStateOf<Int>(0) }
+
+    LaunchedEffect(Unit) {
+        batteryPercentage.value = helpers?.getBatteryPercentage(context) ?: 0
+    }
+
+    // DisposableEffect to register and unregister the receiver
+    DisposableEffect(context) {
+        val batteryReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
+                    val level: Int = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                    val scale: Int = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+
+                    if (level != -1 && scale != -1 && scale != 0) {
+                        batteryPercentage.value = (level.toFloat() / scale.toFloat() * 100.0f).toInt()
+                    }
+                }
+            }
+        }
+
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        context.registerReceiver(batteryReceiver, filter)
+
+        // Cleanup: Unregister receiver when the composable is disposed
+        onDispose {
+            context.unregisterReceiver(batteryReceiver)
+        }
+    }
+    return batteryPercentage
+}
 
 
 
